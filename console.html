@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BareTcl ESP32 Web Console</title>
+    <!-- Include xterm.js CSS and JS from CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #12121e, #181826);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #f0f0f5;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        header {
+            background: rgba(28, 28, 45, 0.85);
+            backdrop-filter: blur(12px);
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+            z-index: 10;
+        }
+        .title-container {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            background: linear-gradient(90deg, #00f2fe, #4facfe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .status-badge {
+            font-size: 11px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+            transition: all 0.4s ease;
+        }
+        .status-disconnected {
+            background-color: #ff3f34;
+            color: #ffffff;
+            box-shadow: 0 0 12px rgba(255, 63, 52, 0.4);
+            animation: pulse-red 2s infinite;
+        }
+        .status-connected {
+            background-color: #05c46b;
+            color: #ffffff;
+            box-shadow: 0 0 12px rgba(5, 196, 107, 0.4);
+        }
+        .status-connecting {
+            background-color: #ffc048;
+            color: #000000;
+            box-shadow: 0 0 12px rgba(255, 192, 72, 0.4);
+            animation: pulse-yellow 1.5s infinite;
+        }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(255, 63, 52, 0.5); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 63, 52, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 63, 52, 0); }
+        }
+        @keyframes pulse-yellow {
+            0% { box-shadow: 0 0 0 0 rgba(255, 192, 72, 0.5); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 192, 72, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 192, 72, 0); }
+        }
+        
+        .main-layout {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 18px;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        /* Hardware Control Panel CSS */
+        .control-panel {
+            background: rgba(30, 30, 48, 0.6);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        }
+        .control-panel-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #a5a5b8;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+        }
+        @media (max-width: 768px) {
+            .control-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        .relay-btn {
+            background: linear-gradient(135deg, rgba(46, 46, 74, 0.8), rgba(35, 35, 58, 0.8));
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: inherit;
+            color: #d1d1eb;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+        }
+        .relay-btn:hover {
+            border-color: rgba(0, 242, 254, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 242, 254, 0.1);
+        }
+        .relay-btn:active {
+            transform: translateY(1px);
+        }
+        .relay-btn.active {
+            background: linear-gradient(135deg, #05c46b, #049f57);
+            border-color: #05c46b;
+            color: #ffffff;
+            box-shadow: 0 0 15px rgba(5, 196, 107, 0.5);
+            animation: pulse-btn-green 1.5s infinite;
+        }
+        @keyframes pulse-btn-green {
+            0% { box-shadow: 0 0 15px rgba(5, 196, 107, 0.5); }
+            50% { box-shadow: 0 0 25px rgba(5, 196, 107, 0.8); }
+            100% { box-shadow: 0 0 15px rgba(5, 196, 107, 0.5); }
+        }
+        .relay-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+        .relay-btn.active .relay-indicator {
+            background-color: #ffffff;
+            box-shadow: 0 0 8px #ffffff;
+        }
+        .countdown-lbl {
+            font-size: 10px;
+            font-weight: normal;
+            opacity: 0.85;
+        }
+
+        /* Terminal CSS */
+        #terminal-container {
+            flex: 1;
+            background: rgba(16, 16, 26, 0.85);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #terminal {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Mobile Utility Bar */
+        .utility-bar {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            background: rgba(24, 24, 38, 0.5);
+            padding: 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .utility-btn {
+            background: rgba(46, 46, 74, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            padding: 8px 14px;
+            color: #b8b8d2;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .utility-btn:hover {
+            background: rgba(0, 242, 254, 0.15);
+            color: #00f2fe;
+            border-color: rgba(0, 242, 254, 0.3);
+        }
+        .utility-btn:active {
+            transform: translateY(1px);
+        }
+
+        footer {
+            text-align: center;
+            padding: 8px;
+            font-size: 11px;
+            color: #555570;
+            border-top: 1px solid rgba(255, 255, 255, 0.03);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="title-container">
+            <h1>BareTcl Web Console</h1>
+            <span id="status" class="status-badge status-disconnected">Disconnected</span>
+        </div>
+        <div style="font-size: 13px; color: #787896;">ESP32 BareTcl Interactive Terminal</div>
+    </header>
+
+    <div class="main-layout">
+        <!-- Hardware Control Panel -->
+        <div class="control-panel">
+            <div class="control-panel-title">
+                <span class="relay-indicator" style="background-color: #00f2fe; box-shadow: 0 0 6px #00f2fe;"></span>
+                Hardware Control Panel (10s Autolock)
+            </div>
+            <div class="control-grid">
+                <button class="relay-btn" id="relay-btn-0" onclick="triggerRelay(0)">
+                    <span class="relay-indicator" id="indicator-0"></span>
+                    <span id="btn-text-0">Relay Channel 1</span>
+                </button>
+                <button class="relay-btn" id="relay-btn-1" onclick="triggerRelay(1)">
+                    <span class="relay-indicator" id="indicator-1"></span>
+                    <span id="btn-text-1">Relay Channel 2</span>
+                </button>
+                <button class="relay-btn" id="relay-btn-2" onclick="triggerRelay(2)">
+                    <span class="relay-indicator" id="indicator-2"></span>
+                    <span id="btn-text-2">Relay Channel 3</span>
+                </button>
+                <button class="relay-btn" id="relay-btn-3" onclick="triggerRelay(3)">
+                    <span class="relay-indicator" id="indicator-3"></span>
+                    <span id="btn-text-3">Relay Channel 4</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Terminal Panel -->
+        <div id="terminal-container">
+            <div id="terminal"></div>
+        </div>
+
+        <!-- Mobile & Accessibility Utility Bar -->
+        <div class="utility-bar">
+            <button class="utility-btn" onclick="sendCtrlC()">Ctrl+C</button>
+            <button class="utility-btn" onclick="sendTab()">Tab</button>
+            <button class="utility-btn" onclick="sendUp()">Up</button>
+            <button class="utility-btn" onclick="sendDown()">Down</button>
+            <button class="utility-btn" onclick="clearTerminal()">Clear</button>
+        </div>
+    </div>
+
+    <footer>
+        Powered by BareTcl & xterm.js | Built with Antigravity CLI
+    </footer>
+
+    <script>
+        // Init xterm.js
+        const term = new Terminal({
+            cursorBlink: true,
+            convertEol: true,
+            theme: {
+                background: '#10101a',
+                foreground: '#f1f1f9',
+                cursor: '#00f2fe',
+                selectionBackground: '#33334d',
+                black: '#000000',
+                red: '#ff5555',
+                green: '#50fa7b',
+                yellow: '#f1fa8c',
+                blue: '#bd93f9',
+                magenta: '#ff79c6',
+                cyan: '#8be9fd',
+                white: '#bfbfbf'
+            },
+            fontFamily: 'Consolas, "Courier New", monospace',
+            fontSize: 14,
+            rows: 20
+        });
+        
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(document.getElementById('terminal'));
+        fitAddon.fit();
+
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+        });
+
+        const statusEl = document.getElementById('status');
+        let socket;
+        let reconnectInterval = 2000;
+        let relayTimers = [null, null, null, null];
+
+        function updateStatus(state, text) {
+            statusEl.className = 'status-badge ' + state;
+            statusEl.innerText = text;
+        }
+
+        function connect() {
+            updateStatus('status-connecting', 'Connecting...');
+            
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            socket = new WebSocket(wsUrl);
+            
+            socket.onopen = () => {
+                updateStatus('status-connected', 'Connected');
+            };
+            
+            socket.onmessage = (event) => {
+                term.write(event.data);
+            };
+            
+            socket.onclose = () => {
+                updateStatus('status-disconnected', 'Disconnected');
+                setTimeout(connect, reconnectInterval);
+            };
+            
+            socket.onerror = (err) => {
+                console.error('WebSocket Error:', err);
+                socket.close();
+            };
+        }
+
+        term.onData(data => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(data);
+            }
+        });
+
+        // Mobile utility buttons handlers
+        function sendCtrlC() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send('\u0003');
+                term.focus();
+            }
+        }
+
+        function sendTab() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send('\t');
+                term.focus();
+            }
+        }
+
+        function sendUp() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send('\u001b[A');
+                term.focus();
+            }
+        }
+
+        function sendDown() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send('\u001b[B');
+                term.focus();
+            }
+        }
+
+        function clearTerminal() {
+            term.clear();
+            term.focus();
+        }
+
+        // Hardware control implementation
+        function triggerRelay(channel) {
+            const btn = document.getElementById(`relay-btn-${channel}`);
+            const textEl = document.getElementById(`btn-text-${channel}`);
+            
+            // Trigger HTTP endpoint
+            fetch(`/change_relay${channel + 1}`)
+                .then(response => response.text())
+                .then(state => {
+                    if (state === "0") {
+                        // Turned ON
+                        startRelayCountdown(channel);
+                    } else if (state === "1") {
+                        // Turned OFF
+                        if (relayTimers[channel]) {
+                            clearInterval(relayTimers[channel]);
+                            relayTimers[channel] = null;
+                        }
+                        btn.classList.remove('active');
+                        textEl.innerHTML = `Relay Channel ${channel + 1}`;
+                    } else {
+                        console.error('Failed to trigger relay, response state:', state);
+                    }
+                })
+                .catch(err => {
+                    console.error('Network error triggering relay:', err);
+                });
+        }
+
+        function startRelayCountdown(channel) {
+            const btn = document.getElementById(`relay-btn-${channel}`);
+            const textEl = document.getElementById(`btn-text-${channel}`);
+            
+            // Clear any existing timer just in case
+            if (relayTimers[channel]) {
+                clearInterval(relayTimers[channel]);
+            }
+
+            btn.classList.add('active');
+            let timeLeft = 10;
+            textEl.innerHTML = `Channel ${channel + 1} <span class="countdown-lbl">(${timeLeft}s)</span>`;
+
+            relayTimers[channel] = setInterval(() => {
+                timeLeft--;
+                if (timeLeft <= 0) {
+                    clearInterval(relayTimers[channel]);
+                    relayTimers[channel] = null;
+                    btn.classList.remove('active');
+                    textEl.innerHTML = `Relay Channel ${channel + 1}`;
+                } else {
+                    textEl.innerHTML = `Channel ${channel + 1} <span class="countdown-lbl">(${timeLeft}s)</span>`;
+                }
+            }, 1000);
+        }
+
+        connect();
+    </script>
+</body>
+</html>
