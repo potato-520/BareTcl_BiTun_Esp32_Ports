@@ -47,9 +47,9 @@ typedef struct {
 } while(0)
 
 // 引入 BareTcl 核心源码与扩展模块
-#include "../../src/tcl_core.c"       // Tcl 核心解释器与内存管理核心
-#include "../../src/extcmd.c"         // Tcl 核心扩展命令实现
-#include "../../src/baretcl_shell.c"  // Tcl 交互式命令行行编辑器实现
+#include "../components/BareTcl/src/tcl_core.c"       // Tcl 核心解释器与内存管理核心
+#include "../components/BareTcl/src/extcmd.c"         // Tcl 核心扩展命令实现
+#include "../components/BareTcl/src/baretcl_shell.c"  // Tcl 交互式命令行行编辑器实现
 #include "esp32_lib.c"                // 由 esp32_lib.tcl 自动编译转换而成的 ESP32 自定义库字节数组
 #include "console_html.c"             // 由 console.html 自动编译转换而成的控制台 HTML 网页字节数组
 #include "freertos/queue.h"
