@@ -18,8 +18,8 @@ echo "=== Generating standard Tcl library from submodule ==="
 python3 assets/BareTcl/tools/tcl2c.py assets/BareTcl/src/tcllib.tcl assets/BareTcl/src/tcllib.c
 
 echo "=== Generating ESP32 Tcl library ==="
-python3 tcl2c_esp32.py esp32_lib.tcl main/esp32_lib.c esp32_bootstrap
-python3 tcl2c_esp32.py console.html main/console_html.c console_html
+python3 tools/tcl2c_esp32.py main/esp32_lib.tcl main/esp32_lib.c esp32_bootstrap
+python3 tools/tcl2c_esp32.py main/console.html main/console_html.c console_html
 
 # 4. 执行编译
 echo "=== Starting ESP-IDF Build ==="

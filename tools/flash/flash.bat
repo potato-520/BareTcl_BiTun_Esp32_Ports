@@ -60,8 +60,8 @@ if not "%INPUT_PORT%"=="" (
 )
 
 :: 3. Check if build files exist
-if not exist "build\bootloader\bootloader.bin" (
-    echo [ERROR] Cannot find build\bootloader\bootloader.bin. Make sure you have compiled the project.
+if not exist "..\..\build\bootloader\bootloader.bin" (
+    echo [ERROR] Cannot find ..\..\build\bootloader\bootloader.bin. Make sure you have compiled the project.
     pause
     exit /b 1
 )
@@ -71,7 +71,7 @@ echo.
 echo [INFO] Flashing firmware to !COM_PORT! ...
 echo.
 
-"!ESPTOOL_EXE!" -p !COM_PORT! -b 460800 --before default_reset --after hard_reset --chip esp32c3 write_flash --flash_mode dio --flash_size 2MB --flash_freq 80m 0x0 build\bootloader\bootloader.bin 0x8000 build\partition_table\partition-table.bin 0x10000 build\ESP32_ports.bin
+"!ESPTOOL_EXE!" -p !COM_PORT! -b 460800 --before default_reset --after hard_reset --chip esp32c3 write_flash --flash_mode dio --flash_size 2MB --flash_freq 80m 0x0 ..\..\build\bootloader\bootloader.bin 0x8000 ..\..\build\partition_table\partition-table.bin 0x10000 ..\..\build\ESP32_ports.bin
 
 if !errorlevel! equ 0 (
     echo.
