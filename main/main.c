@@ -89,11 +89,11 @@ tcl_i32 tcl_cmd_nvs_set(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values)
 tcl_i32 tcl_cmd_nvs_get(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_bitun_start(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_bitun_stop(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_bitun_status(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 
 extern volatile sig_atomic_t g_should_exit;
 tunnel_t *global_tun = NULL;
 TaskHandle_t bitun_task_handle = NULL;
-int g_is_odd_id_generator = 0;
 
 // -------------------------------------------------------------
 // 物理内存池（Arena）布局定义
@@ -527,7 +527,7 @@ static void bitun_task(void *pvParameters) {
     get_nvs_str("bitun_loc_port", loc_port_str, sizeof(loc_port_str), "1080");
     get_nvs_str("bitun_psk", psk_str, sizeof(psk_str), "00000000000000000000000000000000");
     
-    printf("[BiTun] Config loaded: Remote=%s:%s, LocalSOCKS5=:%s\n", rem_ip, rem_port_str, loc_port_str);
+    printf("[BiTun] Config loaded: Remote=%s:%s, LocalSOCKS5=:%s, ID Negotiation=AUTO\n", rem_ip, rem_port_str, loc_port_str);
     
     static char static_rem_ip[64];
     strncpy(static_rem_ip, rem_ip, sizeof(static_rem_ip) - 1);
@@ -593,6 +593,67 @@ tcl_i32 tcl_cmd_bitun_stop(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_valu
     }
     g_should_exit = 1;
     tcl_hal_puts((const tcl_u8 *)"Stop signal sent to BiTun\r\n");
+    return TCL_OK;
+}
+
+// Tcl 指令: bitun_status
+// 查询并输出后台 BiTun 隧道当前运行状态与统计信息
+tcl_i32 tcl_cmd_bitun_status(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    char buf[512];
+    if (bitun_task_handle == NULL) {
+        tcl_hal_puts((const tcl_u8 *)"BiTun status: STOPPED\r\n");
+        char rem_ip[64];
+        char rem_port_str[16];
+        char loc_port_str[16];
+        get_nvs_str("bitun_rem_ip", rem_ip, sizeof(rem_ip), "127.0.0.1");
+        get_nvs_str("bitun_rem_port", rem_port_str, sizeof(rem_port_str), "9999");
+        get_nvs_str("bitun_loc_port", loc_port_str, sizeof(loc_port_str), "1080");
+        
+        snprintf(buf, sizeof(buf), "NVS Config:\r\n  Remote IP  : %s\r\n  Remote Port: %s\r\n  Local Port : %s\r\n  ID Gen Mode: AUTO (Negotiated)\r\n",
+                 rem_ip, rem_port_str, loc_port_str);
+        tcl_hal_puts((const tcl_u8 *)buf);
+        return TCL_OK;
+    }
+    
+    tcl_hal_puts((const tcl_u8 *)"BiTun status: RUNNING\r\n");
+    if (global_tun != NULL) {
+        const char *state_str = "UNKNOWN";
+        switch (global_tun->state) {
+            case STATE_DISCONNECTED: state_str = "DISCONNECTED"; break;
+            case STATE_PUNCHING:     state_str = "PUNCHING"; break;
+            case STATE_AUTH:         state_str = "AUTHENTICATING"; break;
+            case STATE_CONNECTED:    state_str = "CONNECTED"; break;
+        }
+        
+        int active_channels = 0;
+        for (int i = 0; i < MAX_CHANNELS; i++) {
+            if (global_tun->channels[i].is_active) {
+                active_channels++;
+            }
+        }
+        
+        snprintf(buf, sizeof(buf), 
+                 "Tunnel Status:\r\n"
+                 "  State            : %s\r\n"
+                 "  Remote Endpoint  : %s:%d\r\n"
+                 "  Local Listener   : :%d\r\n"
+                 "  ID Generator Mode: %s\r\n"
+                 "  Active Channels  : %d\r\n"
+                 "  Adaptive FEC     : N=%d, R=%d\r\n"
+                 "  Packets Received : %lu\r\n",
+                 state_str,
+                 global_tun->config.remote_ip ? global_tun->config.remote_ip : "0.0.0.0",
+                 global_tun->config.remote_port,
+                 global_tun->config.local_port,
+                 global_tun->is_odd_id_generator ? "ODD" : "EVEN",
+                 active_channels,
+                 global_tun->fec_n,
+                 global_tun->fec_r,
+                 (unsigned long)global_tun->stats_received_packets);
+        tcl_hal_puts((const tcl_u8 *)buf);
+    } else {
+        tcl_hal_puts((const tcl_u8 *)"Warning: Tunnel structure not initialized yet.\r\n");
+    }
     return TCL_OK;
 }
 
@@ -701,6 +762,7 @@ void tcl_task(void *pvParameters) {
     tcl_register_c_cmd((const tcl_u8 *)"nvs_get", tcl_cmd_nvs_get);
     tcl_register_c_cmd((const tcl_u8 *)"bitun_start", tcl_cmd_bitun_start);
     tcl_register_c_cmd((const tcl_u8 *)"bitun_stop", tcl_cmd_bitun_stop);
+    tcl_register_c_cmd((const tcl_u8 *)"bitun_status", tcl_cmd_bitun_status);
 
     // 1. 核心关键步：显式加载标准 Tcl 自举脚本库 (tcllib.tcl -> tcllib.c)
     // 注册高级通用 Tcl 指令（如 for, foreach, incr, lappend, lsearch 等）

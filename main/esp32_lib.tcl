@@ -49,6 +49,7 @@ proc help {} {
     puts ""
     puts "BiTun Tunnel Commands:"
     puts "  bitun_start                  : Start BiTun UDP/KCP proxy tunnel in background"
+    puts "  bitun_status                 : Show current status and config of the BiTun tunnel"
     puts "  bitun_stop                   : Stop BiTun tunnel and release resources"
     puts ""
     puts "Applications:"
