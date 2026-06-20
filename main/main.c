@@ -9,6 +9,8 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "nvs.h"
+#include "../assets/BiTun/src/tunnel.h"
 #include "esp_http_server.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -47,9 +49,9 @@ typedef struct {
 } while(0)
 
 // 引入 BareTcl 核心源码与扩展模块
-#include "../components/BareTcl/src/tcl_core.c"       // Tcl 核心解释器与内存管理核心
-#include "../components/BareTcl/src/extcmd.c"         // Tcl 核心扩展命令实现
-#include "../components/BareTcl/src/baretcl_shell.c"  // Tcl 交互式命令行行编辑器实现
+#include "../assets/BareTcl/src/tcl_core.c"       // Tcl 核心解释器与内存管理核心
+#include "../assets/BareTcl/src/extcmd.c"         // Tcl 核心扩展命令实现
+#include "../assets/BareTcl/src/baretcl_shell.c"  // Tcl 交互式命令行行编辑器实现
 #include "esp32_lib.c"                // 由 esp32_lib.tcl 自动编译转换而成的 ESP32 自定义库字节数组
 #include "console_html.c"             // 由 console.html 自动编译转换而成的控制台 HTML 网页字节数组
 #include "freertos/queue.h"
@@ -83,6 +85,15 @@ tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_ipconfig(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_ping(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_sleep(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_nvs_set(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_nvs_get(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_bitun_start(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_bitun_stop(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+
+extern volatile sig_atomic_t g_should_exit;
+tunnel_t *global_tun = NULL;
+TaskHandle_t bitun_task_handle = NULL;
+int g_is_odd_id_generator = 0;
 
 // -------------------------------------------------------------
 // 物理内存池（Arena）布局定义
@@ -361,6 +372,230 @@ tcl_i32 tcl_cmd_sleep(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     return TCL_OK;
 }
 
+// Tcl 指令: nvs_set <key> <value>
+// 将键值对存储到 ESP32 NVS "storage" 命名空间中
+tcl_i32 tcl_cmd_nvs_set(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    if (arg_count != 3) {
+        tcl_hal_puts((const tcl_u8 *)"Error: nvs_set requires exactly 2 arguments: key value\r\n");
+        return TCL_ERROR;
+    }
+    const char *key = (const char *)TO_PTR(context, arg_values[1]);
+    const char *value = (const char *)TO_PTR(context, arg_values[2]);
+    if (!key || !value) {
+        tcl_hal_puts((const tcl_u8 *)"Error: Invalid key or value parameter\r\n");
+        return TCL_ERROR;
+    }
+    if (strlen(key) > 15) {
+        tcl_hal_puts((const tcl_u8 *)"Error: NVS key length cannot exceed 15 bytes\r\n");
+        return TCL_ERROR;
+    }
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        tcl_hal_puts((const tcl_u8 *)"Error: Failed to open NVS storage namespace\r\n");
+        return TCL_ERROR;
+    }
+    err = nvs_set_str(my_handle, key, value);
+    if (err == ESP_OK) {
+        err = nvs_commit(my_handle);
+    }
+    nvs_close(my_handle);
+    if (err != ESP_OK) {
+        tcl_hal_puts((const tcl_u8 *)"Error: Failed to write and commit value to NVS\r\n");
+        return TCL_ERROR;
+    }
+    return TCL_OK;
+}
+
+// Tcl 指令: nvs_get <key> ?default?
+// 从 ESP32 NVS "storage" 命名空间中读取键值，若不存在则返回默认值（未指定则默认为空字符串）
+tcl_i32 tcl_cmd_nvs_get(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    if (arg_count < 2 || arg_count > 3) {
+        tcl_hal_puts((const tcl_u8 *)"Error: nvs_get requires 1 or 2 arguments: key ?default?\r\n");
+        return TCL_ERROR;
+    }
+    const char *key = (const char *)TO_PTR(context, arg_values[1]);
+    if (!key) {
+        tcl_hal_puts((const tcl_u8 *)"Error: Invalid key parameter\r\n");
+        return TCL_ERROR;
+    }
+    const char *default_val = "";
+    if (arg_count == 3) {
+        default_val = (const char *)TO_PTR(context, arg_values[2]);
+        if (!default_val) {
+            tcl_hal_puts((const tcl_u8 *)"Error: Invalid default parameter\r\n");
+            return TCL_ERROR;
+        }
+    }
+    if (strlen(key) > 15) {
+        tcl_hal_puts((const tcl_u8 *)"Error: NVS key length cannot exceed 15 bytes\r\n");
+        return TCL_ERROR;
+    }
+    
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READONLY, &my_handle);
+    char *buf = NULL;
+    bool success = false;
+    
+    if (err == ESP_OK) {
+        size_t required_size = 0;
+        err = nvs_get_str(my_handle, key, NULL, &required_size);
+        if (err == ESP_OK && required_size > 0) {
+            buf = malloc(required_size);
+            if (buf) {
+                err = nvs_get_str(my_handle, key, buf, &required_size);
+                if (err == ESP_OK) {
+                    success = true;
+                } else {
+                    free(buf);
+                    buf = NULL;
+                }
+            }
+        }
+        nvs_close(my_handle);
+    }
+    
+    const char *result_str = success ? buf : default_val;
+    
+    tcl_u32 len = strlen(result_str) + 1;
+    tcl_u32 res_offset = tcl_alc_p(context, len);
+    if (res_offset == TCL_NULL) {
+        tcl_hal_puts((const tcl_u8 *)"Error: Out of memory in Tcl Arena\r\n");
+        context->result = TCL_NULL;
+        if (success && buf) {
+            free(buf);
+        }
+        return TCL_ERROR;
+    }
+    
+    char *ptr = (char *)TO_PTR(context, res_offset);
+    if (ptr) {
+        strcpy(ptr, result_str);
+    }
+    context->result = res_offset;
+    
+    if (success && buf) {
+        free(buf);
+    }
+    
+    return TCL_OK;
+}
+
+// 辅助函数：从 NVS 获取配置字符串，如果读取失败则使用默认值
+static void get_nvs_str(const char *key, char *buf, size_t max_len, const char *default_val) {
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READONLY, &my_handle);
+    if (err == ESP_OK) {
+        size_t required_size = max_len;
+        err = nvs_get_str(my_handle, key, buf, &required_size);
+        nvs_close(my_handle);
+    }
+    if (err != ESP_OK) {
+        strncpy(buf, default_val, max_len - 1);
+        buf[max_len - 1] = '\0';
+    }
+}
+
+// Background task to run BiTun tunnel
+static void bitun_task(void *pvParameters) {
+    printf("[BiTun] Background task started.\n");
+    g_should_exit = 0;
+    
+    if (bitun_osal_dns_init() != 0) {
+        printf("[BiTun] Failed to initialize OSAL DNS.\n");
+        bitun_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    global_tun = malloc(sizeof(tunnel_t));
+    if (!global_tun) {
+        printf("[BiTun] Failed to allocate tunnel memory.\n");
+        bitun_osal_dns_deinit();
+        bitun_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    char rem_ip[64];
+    char rem_port_str[16];
+    char loc_port_str[16];
+    char psk_str[65];
+    
+    get_nvs_str("bitun_rem_ip", rem_ip, sizeof(rem_ip), "127.0.0.1");
+    get_nvs_str("bitun_rem_port", rem_port_str, sizeof(rem_port_str), "9999");
+    get_nvs_str("bitun_loc_port", loc_port_str, sizeof(loc_port_str), "1080");
+    get_nvs_str("bitun_psk", psk_str, sizeof(psk_str), "00000000000000000000000000000000");
+    
+    printf("[BiTun] Config loaded: Remote=%s:%s, LocalSOCKS5=:%s\n", rem_ip, rem_port_str, loc_port_str);
+    
+    static char static_rem_ip[64];
+    strncpy(static_rem_ip, rem_ip, sizeof(static_rem_ip) - 1);
+    static_rem_ip[sizeof(static_rem_ip) - 1] = '\0';
+    
+    static tunnel_config_t config;
+    config.local_ip = "0.0.0.0";
+    config.local_port = atoi(loc_port_str);
+    config.remote_ip = static_rem_ip;
+    config.remote_port = atoi(rem_port_str);
+    
+    memset(config.psk, 0, PSK_LEN);
+    size_t psk_len = strlen(psk_str);
+    if (psk_len > PSK_LEN) psk_len = PSK_LEN;
+    memcpy(config.psk, psk_str, psk_len);
+    
+    if (tunnel_init(global_tun, &config) != 0) {
+        printf("[BiTun] Failed to initialize tunnel.\n");
+        free(global_tun);
+        global_tun = NULL;
+        bitun_osal_dns_deinit();
+        bitun_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    printf("[BiTun] Running tunnel loop...\n");
+    tunnel_run(global_tun);
+    printf("[BiTun] Tunnel loop exited, cleaning up...\n");
+    
+    tunnel_destroy(global_tun);
+    free(global_tun);
+    global_tun = NULL;
+    bitun_osal_dns_deinit();
+    
+    printf("[BiTun] Background task completed.\n");
+    bitun_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+// Tcl 指令: bitun_start
+// 在后台开启 BiTun 隧道，拉取 NVS 中的配置信息
+tcl_i32 tcl_cmd_bitun_start(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    if (bitun_task_handle != NULL) {
+        tcl_hal_puts((const tcl_u8 *)"BiTun is already running\r\n");
+        return TCL_OK;
+    }
+    BaseType_t ret = xTaskCreate(bitun_task, "bitun_task", 8192, NULL, 5, &bitun_task_handle);
+    if (ret != pdPASS) {
+        tcl_hal_puts((const tcl_u8 *)"Error: Failed to create bitun_task\r\n");
+        return TCL_ERROR;
+    }
+    tcl_hal_puts((const tcl_u8 *)"BiTun started successfully in background\r\n");
+    return TCL_OK;
+}
+
+// Tcl 指令: bitun_stop
+// 停止后台运行的 BiTun 隧道主循环，并安全回收资源
+tcl_i32 tcl_cmd_bitun_stop(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    if (bitun_task_handle == NULL) {
+        tcl_hal_puts((const tcl_u8 *)"BiTun is not running\r\n");
+        return TCL_OK;
+    }
+    g_should_exit = 1;
+    tcl_hal_puts((const tcl_u8 *)"Stop signal sent to BiTun\r\n");
+    return TCL_OK;
+}
+
 // Tcl 指令: log <on|off>
 // 动态开启或关闭 ESP-IDF 底层 Wi-Fi 协议栈和系统内核的高频调试日志，以防止干扰 Tcl 控制台输入。
 tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
@@ -462,6 +697,10 @@ void tcl_task(void *pvParameters) {
     tcl_register_c_cmd((const tcl_u8 *)"ipconfig", tcl_cmd_ipconfig);
     tcl_register_c_cmd((const tcl_u8 *)"ping", tcl_cmd_ping);
     tcl_register_c_cmd((const tcl_u8 *)"sleep", tcl_cmd_sleep);
+    tcl_register_c_cmd((const tcl_u8 *)"nvs_set", tcl_cmd_nvs_set);
+    tcl_register_c_cmd((const tcl_u8 *)"nvs_get", tcl_cmd_nvs_get);
+    tcl_register_c_cmd((const tcl_u8 *)"bitun_start", tcl_cmd_bitun_start);
+    tcl_register_c_cmd((const tcl_u8 *)"bitun_stop", tcl_cmd_bitun_stop);
 
     // 1. 核心关键步：显式加载标准 Tcl 自举脚本库 (tcllib.tcl -> tcllib.c)
     // 注册高级通用 Tcl 指令（如 for, foreach, incr, lappend, lsearch 等）

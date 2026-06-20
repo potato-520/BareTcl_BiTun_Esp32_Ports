@@ -1,6 +1,6 @@
-[submodule "components/BareTcl"]
-	path = components/BareTcl
+[submodule "assets/BareTcl"]
+	path = assets/BareTcl
 	url = https://github.com/potato-520/BareTcl.git
-[submodule "components/BiTun"]
-	path = components/BiTun
+[submodule "assets/BiTun"]
+	path = assets/BiTun
 	url = https://github.com/potato-520/BiTun.git

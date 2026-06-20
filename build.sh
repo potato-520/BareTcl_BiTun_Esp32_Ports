@@ -13,9 +13,9 @@ else
     exit 1
 fi
 
-# 3. 编译 ESP32 自定义 Tcl 库为 C 文件，以及生成标准自举库
+# 3. 编译 ESP32 自定义 Tcl 库为 C 文件，以及生成 standard 自举库
 echo "=== Generating standard Tcl library from submodule ==="
-python3 components/BareTcl/tools/tcl2c.py components/BareTcl/src/tcllib.tcl components/BareTcl/src/tcllib.c
+python3 assets/BareTcl/tools/tcl2c.py assets/BareTcl/src/tcllib.tcl assets/BareTcl/src/tcllib.c
 
 echo "=== Generating ESP32 Tcl library ==="
 python3 tcl2c_esp32.py esp32_lib.tcl main/esp32_lib.c esp32_bootstrap
