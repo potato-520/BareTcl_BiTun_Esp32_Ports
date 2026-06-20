@@ -127,7 +127,22 @@ bitun_stop
 
 ---
 
-## 6. 开源许可 (License)
+## 6. Web Shell 网页控制台 (Web Shell Console)
+
+本项目内置了一个基于 WebSocket 的网页交互式 Tcl 控制台，极大地方便了跨平台调试和动态配置。
+
+*   **默认 Wi-Fi 连接配置**：
+    *   **SSID**: `"testzzzz"`
+    *   **Password**: `"11111111"`
+*   **访问方式**：
+    1. ESP32 成功连上您的 Wi-Fi 路由后，会在串口终端（Monitor）打印获取到的局域网 IP（例如 `192.168.1.100`）。
+    2. 打开同一局域网内的浏览器，访问 `http://<ESP32_IP>/` 即可打开内置的网页交互控制台。
+    3. 在网页文本框中输入 Tcl 命令并回车，命令会通过 `/ws` WebSocket 路由实时发送至 ESP32，且执行结果会即时异步推流回显在网页上。
+
+---
+
+## 7. 开源许可 (License)
 
 本项目采用 **[Apache License 2.0](LICENSE)** 协议开源。
 详情请参阅项目根目录下的 `LICENSE` 文件。
+

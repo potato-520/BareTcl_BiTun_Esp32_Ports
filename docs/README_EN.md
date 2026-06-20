@@ -127,7 +127,22 @@ bitun_stop
 
 ---
 
-## 6. License
+## 6. Web Shell Console
+
+This project features a built-in WebSocket-based interactive Web Tcl Console, which makes cross-platform debugging and dynamic configurations incredibly easy.
+
+*   **Default Wi-Fi Credentials**:
+    *   **SSID**: `"testzzzz"`
+    *   **Password**: `"11111111"`
+*   **How to Access**:
+    1. Once the ESP32 is successfully connected to your Wi-Fi router, check the serial monitor to retrieve the assigned LAN IP address (e.g., `192.168.1.100`).
+    2. Open a web browser on any device in the same local network, and navigate to `http://<ESP32_IP>/` to open the built-in interactive console.
+    3. Type any Tcl command in the input box and press Enter. The command will be sent in real-time to the ESP32 via the `/ws` WebSocket route, and execution output will be streamed back and displayed on the web page asynchronously.
+
+---
+
+## 7. License
 
 This project is licensed under the **[Apache License 2.0](LICENSE)**.  
 For details, please refer to the `LICENSE` file located at the root of this repository.
+
