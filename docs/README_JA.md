@@ -29,8 +29,8 @@
 
 ```text
 ├── assets/
-│   ├── BareTcl/          # 本家BareTclリポジトリのサブモジュール (assets/BareTcl)
-│   └── BiTun/            # 本家BiTunリポジトリのサブモジュール (assets/BiTun)
+│   ├── BareTcl/          # BareTcl公式リポジトリのサブモジュール (assets/BareTcl)
+│   └── BiTun/            # BiTun公式リポジトリのサブモジュール (assets/BiTun)
 ├── components/
 │   └── bitun_wrapper/
 │       ├── CMakeLists.txt
@@ -38,10 +38,18 @@
 ├── main/
 │   ├── CMakeLists.txt
 │   ├── main.c            # アプリケーションのエントリポイント、カスタムTclコマンドの登録、ブートストラップ処理
-│   ├── console_html.c    # WebコンソールUI用コンパイル済みバイト配列
-│   └── esp32_lib.c       # Tcl起動スクリプトをパッケージ化したCバイト配列
+│   ├── console.html      # 原始HTML版Webコンソール画面
+│   ├── esp32_lib.tcl     # ESP32用Tcl自挙ブートストラップライブラリ
+│   ├── console_html.c    # 自動生成されたWebコンソール用Cバイト配列
+│   └── esp32_lib.c       # 自動生成されたTcl自挙用Cバイト配列
+├── tools/
+│   ├── debug/            # OpenOCD / GDBデバッグ用の構成ファイル (debug.cfg, debug.svd)
+│   ├── flash/            # Windows向け環境構築不要の一クリック書き込みツール (flash.bat, esptool.zip, flashcom.txt)
+│   └── tcl2c_esp32.py    # Tcl/HTMLをCバイト配列へ自動変換するPythonビルドスクリプト
 ├── CMakeLists.txt
-├── build.sh              # Tclコードのパッケージ化とESP32ファームウェアのコンパイルを統合したスクリプト
+├── sdkconfig             # ESP-IDFビルド構成ファイル
+├── build.sh              # Tclのパッケージ化とESP32ファームウェアビルドを自動実行するBashスクリプト
+├── clean.sh              # ビルド生成物をクリーンアップするBashスクリプト
 ├── LICENSE               # Apache 2.0 オープンソースライセンス
 └── README.md             # プロジェクト説明書 (簡体字中国語)
 ```
@@ -55,7 +63,7 @@
 *   CMake および Ninja ビルドツール。
 *   Python 3.x。
 
-### 3.2 ビルドと書き込み
+### 3.2 ビルド
 TclスクリプトをCのバイト配列に自動変換し、ESP-IDFプロジェクトをビルドするためのシェルスクリプト `build.sh` を提供しています：
 
 ```bash
@@ -66,10 +74,14 @@ chmod +x build.sh
 ./build.sh
 ```
 
-ビルドが完了したら、ファームウェアを書き込み、コンソールモニターを起動します（例：ESP32-C3チップ）：
-```bash
-idf.py -p <シリアルポート名> flash monitor
-```
+### 3.3 書き込み（フラッシュ）
+*   **Windows環境 (一クリック書き込みを推奨)**：
+    `tools/flash/` ディレクトリに移動し、`flash.bat` スクリプトをダブルクリックして直接実行します。Windows側にESP-IDFツールチェーンやPython環境をインストールすることなく、自動的にシリアルポートを検出してビルド済みのファームウェアを書き込むことができます。
+*   **Linux / macOS環境 (標準のESP-IDFコマンドを使用)**：
+    ビルド完了後、プロジェクトのルートディレクトリで以下のコマンドを実行し、書き込みとモニタリングを開始します（例：ESP32-C3）：
+    ```bash
+    idf.py -p <シリアルポート名> flash monitor
+    ```
 
 ---
 
@@ -141,8 +153,25 @@ bitun_stop
 
 ---
 
-## 7. ライセンス (License)
+## 7. Windows 一クリック書き込みの仕組み (Windows Flashing Principle)
+
+本プロジェクトは、`tools/flash/` 内にWindowsプラットフォーム向けの一クリック書き込みパッケージを同梱しています。`flash.bat` の動作原理とワークフローは以下の通りです：
+
+1.  **書き込みツールチェーンの自動解凍**：
+    `flash.bat` の実行時に、スクリプトはローカルに `esptool-v4.11.0-windows-amd64` フォルダが存在するかどうかを確認します。見つからない場合、Windowsに組み込まれている **PowerShell** を呼び出して `Expand-Archive` コマンドを実行し、同ディレクトリ内の `esptool-v4.11.0-windows-amd64.zip` を動的に自動解凍します。
+2.  **シリアルポート構成の永続化**：
+    同じディレクトリ内の `flashcom.txt` から最後に使用したCOMポート（デフォルトは `COM3`）を読み取ります。ユーザーがプロンプトで新しいポート（例：`COM4`）を入力した場合、スクリプトはそれを自動的に `flashcom.txt` に書き込み保存するため、次回以降の再入力を省略できます。
+3.  **マルチパーティションへの直接アドレス書き込み**：
+    解凍された `esptool.exe` は、完全なスタンドアロンのコマンドライン書き込みツールとして動作します。バッチスクリプトは、ローカルのESP-IDFコンパイルスイート全体を介さずに、ビルドで生成されたバイナリを直接かつ正確なフラッシュオフセットを指定して書き込みます：
+    *   `0x0` -> `../../build/bootloader/bootloader.bin` (セカンドステージブートローダ)
+    *   `0x8000` -> `../../build/partition_table/partition-table.bin` (フラッシュのパーティション配置を規定するパーティションテーブル)
+    *   `0x10000` -> `../../build/ESP32_ports.bin` (BareTclとBiTunを統合したメインアプリケーションファームウェア)
+
+---
+
+## 8. ライセンス (License)
 
 本プロジェクトは **[Apache License 2.0](LICENSE)** に基づいてオープンソースとして提供されています。  
 詳細は、本リポジトリのルートにある `LICENSE` ファイルをご参照ください。
+
 

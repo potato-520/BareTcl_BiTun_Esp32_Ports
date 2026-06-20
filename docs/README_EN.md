@@ -29,8 +29,8 @@ With this project, you can run an ultra-lightweight, interactive Tcl command-lin
 
 ```text
 ├── assets/
-│   ├── BareTcl/          # Submodule pointing to the upstream BareTcl repository
-│   └── BiTun/            # Submodule pointing to the upstream BiTun repository
+│   ├── BareTcl/          # BareTcl official source submodule (assets/BareTcl)
+│   └── BiTun/            # BiTun official source submodule (assets/BiTun)
 ├── components/
 │   └── bitun_wrapper/
 │       ├── CMakeLists.txt
@@ -38,10 +38,18 @@ With this project, you can run an ultra-lightweight, interactive Tcl command-lin
 ├── main/
 │   ├── CMakeLists.txt
 │   ├── main.c            # App entrypoint, custom Tcl command registrations, and bootstrap logic
-│   ├── console_html.c    # Compiled bytecode array for the web-based console UI
-│   └── esp32_lib.c       # Tcl bootstrap application scripts packed as a C byte array
+│   ├── console.html      # Original HTML web console page
+│   ├── esp32_lib.tcl     # ESP32 Tcl bootstrap library helper script
+│   ├── console_html.c    # Automatically generated Web Console C byte array
+│   └── esp32_lib.c       # Automatically generated Tcl bootstrap C byte array
+├── tools/
+│   ├── debug/            # OpenOCD / GDB debugging configuration files (debug.cfg, debug.svd)
+│   ├── flash/            # Windows installer-free one-click flash package (flash.bat, esptool.zip, flashcom.txt)
+│   └── tcl2c_esp32.py    # Python build script to convert Tcl/HTML files into C arrays
 ├── CMakeLists.txt
-├── build.sh              # Unified script to package Tcl code and compile the ESP32 firmware
+├── sdkconfig             # ESP-IDF compilation configuration file
+├── build.sh              # Bash script to package Tcl code and compile the firmware
+├── clean.sh              # Bash script to clean up build compilation outputs
 ├── LICENSE               # Apache 2.0 Open-Source License
 └── README.md             # Project documentation (Simplified Chinese)
 ```
@@ -55,7 +63,7 @@ With this project, you can run an ultra-lightweight, interactive Tcl command-lin
 *   CMake and Ninja build tools.
 *   Python 3.x.
 
-### 3.2 Building and Flashing
+### 3.2 Building
 We provide a unified shell script `build.sh` that compiles the Tcl bootstrap scripts into C byte arrays and builds the ESP-IDF project:
 
 ```bash
@@ -66,10 +74,14 @@ chmod +x build.sh
 ./build.sh
 ```
 
-Once the compilation succeeds, you can flash the binary to your chip (e.g., ESP32-C3) and start the console monitor:
-```bash
-idf.py -p <YOUR_SERIAL_PORT> flash monitor
-```
+### 3.3 Flashing
+*   **Windows Platform (Recommended)**:
+    Navigate to the `tools/flash/` directory and double-click `flash.bat`. It will automatically configure the serial port and flash the compiled binaries without requiring you to install Python or the ESP-IDF toolchain on Windows.
+*   **Linux / macOS Platforms (Using standard ESP-IDF CLI)**:
+    Run the following command in the root project directory to flash and monitor (assuming ESP32-C3):
+    ```bash
+    idf.py -p <YOUR_SERIAL_PORT> flash monitor
+    ```
 
 ---
 
@@ -141,8 +153,25 @@ This project features a built-in WebSocket-based interactive Web Tcl Console, wh
 
 ---
 
-## 7. License
+## 7. Windows Flashing Principle
+
+This project includes an installer-free, one-click Windows flashing package in `tools/flash/`. The underlying workflow and mechanisms of `flash.bat` are as follows:
+
+1.  **Auto-Extract Toolchain**:
+    Upon execution, the script verifies if the `esptool-v4.11.0-windows-amd64` folder is present locally. If missing, it invokes the built-in **PowerShell** engine using the `Expand-Archive` cmdlet to unpack the bundled `esptool-v4.11.0-windows-amd64.zip` package dynamically.
+2.  **Port Configuration Persistence**:
+    It reads `flashcom.txt` in the same directory to fetch the last configured COM port (defaults to `COM3`). If the user specifies a new port (such as `COM4`), the script updates and writes it back to `flashcom.txt` automatically, removing the need to re-enter it in subsequent runs.
+3.  **Multi-Partition Flash Addressing**:
+    The unpacked `esptool.exe` operates as a stand-alone command-line flash programmer. The batch script invokes it with precise flash offsets and build paths, bypassing the entire local ESP-IDF compilation suite:
+    *   `0x0` -> `../../build/bootloader/bootloader.bin` (Second-stage bootloader)
+    *   `0x8000` -> `../../build/partition_table/partition-table.bin` (Partition table layout defining Flash partitions)
+    *   `0x10000` -> `../../build/ESP32_ports.bin` (The main application固件 merging BareTcl and BiTun)
+
+---
+
+## 8. License
 
 This project is licensed under the **[Apache License 2.0](LICENSE)**.  
 For details, please refer to the `LICENSE` file located at the root of this repository.
+
 

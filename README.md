@@ -38,10 +38,18 @@
 ├── main/
 │   ├── CMakeLists.txt
 │   ├── main.c            # 项目主入口、Tcl 命令定义与自举逻辑
-│   ├── console_html.c    # Web 控制台前端字节数组
-│   └── esp32_lib.c       # Tcl 自定义脚本打包生成的字节数组
+│   ├── console.html      # 原始 Web 控制台前端页面
+│   ├── esp32_lib.tcl     # ESP32 Tcl 自举脚本库
+│   ├── console_html.c    # 自动生成的 Web 控制台 C 字节数组
+│   └── esp32_lib.c       # 自动生成的 Tcl 自举 C 字节数组
+├── tools/
+│   ├── debug/            # OpenOCD / GDB 调试配置文件 (debug.cfg, debug.svd 等)
+│   ├── flash/            # Windows 免安装一键烧录包 (flash.bat, esptool.zip, flashcom.txt)
+│   └── tcl2c_esp32.py    # Tcl/HTML 转 C 字节数组脚本工具
 ├── CMakeLists.txt
-├── build.sh              # 一键生成 Tcl 字节代码并编译固件的脚本
+├── sdkconfig             # ESP-IDF 编译配置文件
+├── build.sh              # 一键生成 Tcl 字节代码并编译固件的 Bash 脚本
+├── clean.sh              # 清除编译产物的 Bash 脚本
 ├── LICENSE               # Apache 2.0 开源许可协议
 └── README.md             # 本说明文档 (简体中文)
 ```
@@ -55,7 +63,7 @@
 *   CMake 与 Ninja 构建工具。
 *   Python 3.x。
 
-### 3.2 编译与烧录
+### 3.2 编译
 我们提供了一个自动打包 Tcl 自举脚本并编译项目的脚本 `build.sh`：
 
 ```bash
@@ -66,10 +74,14 @@ chmod +x build.sh
 ./build.sh
 ```
 
-编译完成后，可以使用 ESP-IDF 命令进行烧录（以 ESP32-C3 芯片为例）：
-```bash
-idf.py -p <您的串口号> flash monitor
-```
+### 3.3 烧录与闪存
+*   **Windows 平台 (推荐一键烧录方式)**：
+    进入 `tools/flash/` 目录，直接双击运行 `flash.bat` 脚本。它会自动配置串口并写入编译生成的固件，无需在 Windows 上安装任何 ESP-IDF 开发环境或 Python 环境。
+*   **Linux / macOS 平台 (使用标准 ESP-IDF 命令)**：
+    编译完成后，在项目根目录下直接使用命令进行烧录和监控（以 ESP32-C3 为例）：
+    ```bash
+    idf.py -p <您的串口号> flash monitor
+    ```
 
 ---
 
@@ -141,8 +153,25 @@ bitun_stop
 
 ---
 
-## 7. 开源许可 (License)
+## 7. Windows 一键烧录原理 (Windows Flashing Principle)
+
+本项目在 `tools/flash/` 下提供了 Windows 平台的一键烧录工具。其工作原理与流程如下：
+
+1.  **自动解压工具链**：
+    运行 `flash.bat` 时，脚本首先检测本地是否已解压 `esptool-v4.11.0-windows-amd64`。若无，将调用 Windows 內置的 **PowerShell** 运行 `Expand-Archive` 指令，动态解压同级目录下的 `esptool-v4.11.0-windows-amd64.zip`。
+2.  **串口配置持久化**：
+    读取同级目录下的 `flashcom.txt` 文件获取最近使用的串口号（默认 `COM3`）。若用户在提示符中输入了新的串口（如 `COM4`），它会自动将其写入并持久化更新到 `flashcom.txt` 中，避免下次重复输入。
+3.  **多分区直接寻址烧写**：
+    解压得到的 `esptool.exe` 是一个完全独立的底层烧写工具。脚本会向其传递精确的固件分区偏移量和构建产物路径，避开了整个复杂的 ESP-IDF 编译框架：
+    *   `0x0` 偏移量 -> `../../build/bootloader/bootloader.bin` (二级引导程序)
+    *   `0x8000` 偏移量 -> `../../build/partition_table/partition-table.bin` (分区表，界定应用分区布局)
+    *   `0x10000` 偏移量 -> `../../build/ESP32_ports.bin` (本项目的 Tcl 与 BiTun 整合主应用固件)
+
+---
+
+## 8. 开源许可 (License)
 
 本项目采用 **[Apache License 2.0](LICENSE)** 协议开源。
 详情请参阅项目根目录下的 `LICENSE` 文件。
+
 
