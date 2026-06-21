@@ -18,6 +18,8 @@
 #include "esp_system.h"
 #include "esp_flash.h"
 #include "esp_chip_info.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include <fcntl.h>
 #include "driver/uart_vfs.h"
 #include <termios.h>
@@ -704,12 +706,11 @@ tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
 // Tcl 指令: sysinfo
 // 获取运行时系统信息（芯片型号、核心数、Flash 大小、剩余堆内存等）
 tcl_i32 tcl_cmd_sysinfo(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
-    char buf[512];
+    char buf[1024];
+    
+    // 1. 读取芯片硬件信息
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
-    
-    uint32_t flash_size = 0;
-    esp_flash_get_size(NULL, &flash_size);
     
     const char *model_str;
     switch(chip_info.model) {
@@ -729,23 +730,67 @@ tcl_i32 tcl_cmd_sysinfo(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values)
         default: model_str = "Unknown ESP32"; break;
     }
     
+    // 2. 读取物理 Flash 大小与当前运行 App 分区信息
+    uint32_t flash_size = 0;
+    esp_flash_get_size(NULL, &flash_size);
+    
+    uint32_t part_size = 0;
+    uint32_t part_offset = 0;
+    const esp_partition_t *run_part = esp_ota_get_running_partition();
+    if (run_part) {
+        part_size = run_part->size;
+        part_offset = run_part->address;
+    }
+    
+    // 3. 读取系统动态堆（SRAM）使用情况
+    uint32_t total_heap = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+    uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    uint32_t min_free_heap = esp_get_minimum_free_heap_size();
+    uint32_t used_heap = (total_heap > free_heap) ? (total_heap - free_heap) : 0;
+    
+    // 4. 读取 BareTcl 内部静态 Arena 内存池占用详情
+    uint32_t tcl_total = context->size;
+    uint32_t hs_align = ((sizeof(TclCtx) + 15) & ~15);
+    uint32_t tcl_vars = (context->p_top > hs_align) ? (context->p_top - hs_align) : 0;
+    uint32_t tcl_stack = (context->size > context->t_bot) ? (context->size - context->t_bot) : 0;
+    uint32_t tcl_free = (context->t_bot > context->p_top) ? (context->t_bot - context->p_top) : 0;
+    
     snprintf(buf, sizeof(buf),
-             "Chip Model: %s (revision %d)\n"
-             "Cores: %d\n"
-             "Features: %s%s%s%s\n"
-             "Flash Size: %d MB (%s)\n"
-             "Free Heap: %d KB\n"
-             "Min Free Heap: %d KB",
+             "=== System Hardware & OS ===\n"
+             "  Chip Model        : %s (rev %d)\n"
+             "  Cores             : %d\n"
+             "  Features          : %s%s%s\n\n"
+             "=== SRAM (System Heap) Memory ===\n"
+             "  Total Heap Size   : %u bytes (%.1f KB)\n"
+             "  Free Heap Size    : %u bytes (%.1f KB)\n"
+             "  Used Heap Size    : %u bytes (%.1f KB)\n"
+             "  Min Free Heap Ever: %u bytes (%.1f KB)\n\n"
+             "=== BareTcl Static Arena (%d KB Pool) ===\n"
+             "  Arena Total Size  : %u bytes (%.1f KB)\n"
+             "  Variables Used    : %u bytes (%.1f KB)\n"
+             "  Execution Stack   : %u bytes (%.1f KB)\n"
+             "  Remaining Free    : %u bytes (%.1f KB)\n\n"
+             "=== Flash Storage ===\n"
+             "  Physical Flash    : %u bytes (%.1f MB)\n"
+             "  App Partition Size: %u bytes (%.1f MB)\n"
+             "  App Part. Offset  : 0x%X",
              model_str, chip_info.revision,
              chip_info.cores,
              (chip_info.features & CHIP_FEATURE_WIFI_BGN) ? "WiFi " : "",
-             (chip_info.features & CHIP_FEATURE_BT) ? "BT " : "",
              (chip_info.features & CHIP_FEATURE_BLE) ? "BLE " : "",
-             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "Embedded-Flash " : "",
-             (int)(flash_size / (1024 * 1024)),
-             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "Embedded" : "External",
-             (int)(esp_get_free_heap_size() / 1024),
-             (int)(esp_get_minimum_free_heap_size() / 1024));
+             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "Emb-Flash" : "Ext-Flash",
+             (unsigned int)total_heap, (float)total_heap / 1024.0f,
+             (unsigned int)free_heap, (float)free_heap / 1024.0f,
+             (unsigned int)used_heap, (float)used_heap / 1024.0f,
+             (unsigned int)min_free_heap, (float)min_free_heap / 1024.0f,
+             (int)(tcl_total / 1024),
+             (unsigned int)tcl_total, (float)tcl_total / 1024.0f,
+             (unsigned int)tcl_vars, (float)tcl_vars / 1024.0f,
+             (unsigned int)tcl_stack, (float)tcl_stack / 1024.0f,
+             (unsigned int)tcl_free, (float)tcl_free / 1024.0f,
+             (unsigned int)flash_size, (float)flash_size / (1024.0f * 1024.0f),
+             (unsigned int)part_size, (float)part_size / (1024.0f * 1024.0f),
+             (unsigned int)part_offset);
              
     tcl_u32 len = strlen(buf) + 1;
     tcl_u32 res_offset = tcl_alc_p(context, len);
