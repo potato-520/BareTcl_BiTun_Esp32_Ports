@@ -41,6 +41,7 @@ proc help {} {
     puts "  ipconfig                     : Show Wi-Fi connection status and IP info"
     puts "  ping <host_or_ip>            : Send ICMP Echo requests to network host"
     puts "  sleep <ms>                   : Delay current task in milliseconds (non-blocking)"
+    puts "  sysinfo                      : Show system hardware, flash and heap information"
     puts "  exit                         : Reboot the ESP32 chip"
     puts ""
     puts "NVS Configuration Commands:"

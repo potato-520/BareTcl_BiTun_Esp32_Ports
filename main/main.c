@@ -16,6 +16,8 @@
 #include "driver/uart.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_flash.h"
+#include "esp_chip_info.h"
 #include <fcntl.h>
 #include "driver/uart_vfs.h"
 #include <termios.h>
@@ -90,6 +92,7 @@ tcl_i32 tcl_cmd_nvs_get(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values)
 tcl_i32 tcl_cmd_bitun_start(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_bitun_stop(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_bitun_status(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_sysinfo(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 
 extern volatile sig_atomic_t g_should_exit;
 tunnel_t *global_tun = NULL;
@@ -575,7 +578,8 @@ tcl_i32 tcl_cmd_bitun_start(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_val
         tcl_hal_puts((const tcl_u8 *)"BiTun is already running\r\n");
         return TCL_OK;
     }
-    BaseType_t ret = xTaskCreate(bitun_task, "bitun_task", 8192, NULL, 5, &bitun_task_handle);
+    // 将 bitun_task 优先级降低为 4，使其作为后台流量转发任务运行，避免抢占 Web 控制台和交互式 Shell
+    BaseType_t ret = xTaskCreate(bitun_task, "bitun_task", 8192, NULL, 4, &bitun_task_handle);
     if (ret != pdPASS) {
         tcl_hal_puts((const tcl_u8 *)"Error: Failed to create bitun_task\r\n");
         return TCL_ERROR;
@@ -697,6 +701,64 @@ tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     return TCL_OK;
 }
 
+// Tcl 指令: sysinfo
+// 获取运行时系统信息（芯片型号、核心数、Flash 大小、剩余堆内存等）
+tcl_i32 tcl_cmd_sysinfo(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    char buf[512];
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    
+    uint32_t flash_size = 0;
+    esp_flash_get_size(NULL, &flash_size);
+    
+    const char *model_str;
+    switch(chip_info.model) {
+        case CHIP_ESP32: model_str = "ESP32"; break;
+        case CHIP_ESP32S2: model_str = "ESP32-S2"; break;
+        case CHIP_ESP32S3: model_str = "ESP32-S3"; break;
+        case CHIP_ESP32C3: model_str = "ESP32-C3"; break;
+#ifdef CHIP_ESP32C2
+        case CHIP_ESP32C2: model_str = "ESP32-C2"; break;
+#endif
+#ifdef CHIP_ESP32C6
+        case CHIP_ESP32C6: model_str = "ESP32-C6"; break;
+#endif
+#ifdef CHIP_ESP32H2
+        case CHIP_ESP32H2: model_str = "ESP32-H2"; break;
+#endif
+        default: model_str = "Unknown ESP32"; break;
+    }
+    
+    snprintf(buf, sizeof(buf),
+             "Chip Model: %s (revision %d)\n"
+             "Cores: %d\n"
+             "Features: %s%s%s%s\n"
+             "Flash Size: %d MB (%s)\n"
+             "Free Heap: %d KB\n"
+             "Min Free Heap: %d KB",
+             model_str, chip_info.revision,
+             chip_info.cores,
+             (chip_info.features & CHIP_FEATURE_WIFI_BGN) ? "WiFi " : "",
+             (chip_info.features & CHIP_FEATURE_BT) ? "BT " : "",
+             (chip_info.features & CHIP_FEATURE_BLE) ? "BLE " : "",
+             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "Embedded-Flash " : "",
+             (int)(flash_size / (1024 * 1024)),
+             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "Embedded" : "External",
+             (int)(esp_get_free_heap_size() / 1024),
+             (int)(esp_get_minimum_free_heap_size() / 1024));
+             
+    tcl_u32 len = strlen(buf) + 1;
+    tcl_u32 res_offset = tcl_alc_p(context, len);
+    if (res_offset != TCL_NULL) {
+        char *ptr = (char *)TO_PTR(context, res_offset);
+        if (ptr) {
+            strcpy(ptr, buf);
+        }
+        context->result = res_offset;
+    }
+    return TCL_OK;
+}
+
 static void handle_input_char(TclCtx *ctx, TclShell *tcl_sh, uint8_t c) {
     if (shell_handle_char(tcl_sh, c, "> ") == 1) {
         int status = tcl_eval(ctx, tcl_sh->line);
@@ -763,6 +825,7 @@ void tcl_task(void *pvParameters) {
     tcl_register_c_cmd((const tcl_u8 *)"bitun_start", tcl_cmd_bitun_start);
     tcl_register_c_cmd((const tcl_u8 *)"bitun_stop", tcl_cmd_bitun_stop);
     tcl_register_c_cmd((const tcl_u8 *)"bitun_status", tcl_cmd_bitun_status);
+    tcl_register_c_cmd((const tcl_u8 *)"sysinfo", tcl_cmd_sysinfo);
 
     // 1. 核心关键步：显式加载标准 Tcl 自举脚本库 (tcllib.tcl -> tcllib.c)
     // 注册高级通用 Tcl 指令（如 for, foreach, incr, lappend, lsearch 等）
@@ -1030,6 +1093,7 @@ void wifi_init_sta(void) {
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     esp_wifi_start(); // 激活 Wi-Fi 硬件
+    esp_wifi_set_ps(WIFI_PS_NONE); // 禁用省电模式，大幅降低延迟，消除 Web 控制台敲击卡顿
 }
 
 // -------------------------------------------------------------
@@ -1148,8 +1212,9 @@ void app_main(void) {
     wifi_init_sta();
     start_webserver();
 
-    // 创建独立的 FreeRTOS 任务（tcl_task），分配 8KB 的栈空间，优先级设为 5
-    tcl_task_create_res = xTaskCreate(tcl_task, "tcl_task", 8192, NULL, 5, NULL);
+    // 创建独立的 FreeRTOS 任务（tcl_task），分配 8KB 的栈空间，优先级设为 6 (高于 Web Server 优先级 5 和 BiTun 优先级 4)
+    // 确保任何按键输入或控制台回显能被实时处理，消除卡顿
+    tcl_task_create_res = xTaskCreate(tcl_task, "tcl_task", 8192, NULL, 6, NULL);
 
     // 芯片硬件轮询主循环（用于按键的消抖捕获、继电器的自动安全延时自锁关断）
     bool lastButtonState[4] = { 1, 1, 1, 1 };
